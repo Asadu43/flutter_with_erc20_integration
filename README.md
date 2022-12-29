@@ -1,16 +1,9 @@
 # flutter_with_erc20_integration
 
-A new Flutter project.
+# A Project in which 
 
-## Getting Started
-
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+1 Connect Project with metamask \
+2 ERC20 contract integration \
+3 Mint token and transfer\
+4 wait for transaction Confirmation or Transaction Receipt\
+5 Calculate Estimate Gas fee for Transaction
