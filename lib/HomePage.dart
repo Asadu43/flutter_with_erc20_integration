@@ -90,14 +90,14 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future mintToken(BuildContext context) async {
-    BigInt bigAmount = BigInt.from(5 * pow(10, 18));
+    BigInt bigAmount = BigInt.from(100e18);
     EthereumAddress toAddress = EthereumAddress.fromHex(_session!.accounts[0]);
     var response = await submit("mint", [toAddress, bigAmount], context);
     return response;
   }
 
   Future transferToken(BuildContext context) async {
-    BigInt bigAmount = BigInt.from(1 * pow(10, 18));
+    BigInt bigAmount = BigInt.from(10e18);
     EthereumAddress toAddress =
         EthereumAddress.fromHex("0x95d214e60C1881FAcfca90D8909F0DdEE63F004f");
     var response = await submit("transfer", [toAddress, bigAmount], context);
@@ -111,10 +111,16 @@ class _HomePageState extends State<HomePage> {
             EthereumWalletConnectProvider(connector);
         await launchUrlString(_uri, mode: LaunchMode.externalApplication);
         var data = contract.function(name).encodeCall(args);
+
+        var p = await web3client.estimateGas(
+          to: EthereumAddress.fromHex(contractAddress),
+          sender: EthereumAddress.fromHex(_session!.accounts[0]),
+          data: data,
+        );
         var tx = await provider.sendTransaction(
           from: _session!.accounts[0],
           to: contractAddress,
-          gas: 320000,
+          gas: p.toInt(),
           data: data,
         );
         TransactionReceipt? val = await web3client.getTransactionReceipt(tx);
@@ -141,14 +147,14 @@ class _HomePageState extends State<HomePage> {
                 await web3client.getTransactionReceipt(tx);
             if (value?.status != null) {
               Navigator.pop(context);
-              loadDialog(context, value!);
+              loadDialog(context, value!, tx);
             } else {
               Future.delayed(const Duration(seconds: 10), () async {
                 TransactionReceipt? value =
                     await web3client.getTransactionReceipt(tx);
                 if (value?.status != null) {
                   Navigator.pop(context);
-                  loadDialog(context, value!);
+                  loadDialog(context, value!, tx);
                 }
               });
             }
@@ -164,7 +170,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  void loadDialog(BuildContext context, TransactionReceipt value) {
+  void loadDialog(BuildContext context, TransactionReceipt value, var hash) {
     showDialog(
       context: context,
       builder: (context) {
@@ -195,6 +201,14 @@ class _HomePageState extends State<HomePage> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [const Text("Gas Used"), Text("${value.gasUsed}")],
               ),
+              Divider(),
+              const Text("Hash"),
+              Divider(),
+              Flexible(
+                  child: Text(
+                "$hash",
+                style: TextStyle(fontSize: 10),
+              ))
             ],
           ),
           actions: [
