@@ -1,11 +1,25 @@
 import 'dart:math';
 
+import 'package:convert/convert.dart';
+import 'package:external_app_launcher/external_app_launcher.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:url_launcher/url_launcher_string.dart';
+
 import 'package:walletconnect_dart/walletconnect_dart.dart';
+import 'package:walletconnect_flutter_v2/apis/core/pairing/utils/pairing_models.dart';
+import 'package:walletconnect_flutter_v2/apis/sign_api/models/json_rpc_models.dart';
+import 'package:walletconnect_flutter_v2/apis/sign_api/models/proposal_models.dart';
+import 'package:walletconnect_flutter_v2/apis/sign_api/models/session_models.dart';
+import 'package:walletconnect_flutter_v2/apis/sign_api/models/sign_client_models.dart';
+import 'package:walletconnect_flutter_v2/apis/sign_api/sign_client.dart';
+import 'package:walletconnect_flutter_v2/apis/utils/namespace_utils.dart';
+import 'package:walletconnect_flutter_v2/apis/web3app/web3app.dart';
 import 'package:web3dart/web3dart.dart';
+
+import 'EthereumTransaction.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({Key? key}) : super(key: key);
@@ -15,8 +29,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  var _uri, account;
-  SessionStatus? _session;
+  static Web3App? _walletConnect;
   var myData = BigInt.zero;
   late Client client;
   late Web3Client web3client;
@@ -24,49 +37,140 @@ class _HomePageState extends State<HomePage> {
   String? name;
   String? symbol;
   String contractAddress = "0xB4F284Df7D40f40327db4A27C855BB1f909891c2";
-  final rpc_url =
-      "https://goerli.infura.io/v3/4009a1b4ddf34fc6ad587c4b10dabe52";
+  final rpc_url = "https://goerli.infura.io/v3/4009a1b4ddf34fc6ad587c4b10dabe52";
 
-  var connector = WalletConnect(
-      bridge: 'https://bridge.walletconnect.org',
-      clientMeta: const PeerMeta(
-          name: 'My App',
-          description: 'An app for Connect with MetaMask and Send Transaction',
-          url: 'https://walletconnect.org',
-          icons: [
-            'https://files.gitbook.com/v0/b/gitbook-legacy-files/o/spaces%2F-LJJeCjcLrr53DcT1Ml7%2Favatar.png?alt=media'
-          ]));
+  Future<void> _initWalletConnect() async {
+    _walletConnect = await Web3App.createInstance(
+      projectId: 'b8ff9c52a3433ab288836f7402d5d323',
+      metadata: const PairingMetadata(
+        name: 'Flutter WalletConnect',
+        description: 'Flutter WalletConnect Dapp Example',
+        url: 'https://walletconnect.com/',
+        icons: [
+          'https://walletconnect.com/walletconnect-logo.png',
+        ],
+      ),
+    );
+  }
 
-  loginUsingMetamask(BuildContext context) async {
-    if (!connector.connected) {
-      try {
-        var session = await connector.createSession(onDisplayUri: (uri) async {
-          _uri = uri;
-          await launchUrlString(uri, mode: LaunchMode.externalApplication);
-          contract = await loadContract();
-        });
-        setState(() {
-          _session = session;
-          account = _session!.accounts[0];
-        });
-      } catch (exp) {
-        print(exp);
-      }
+  static const String launchError = 'Metamask wallet not installed';
+  static const String kShortChainId = 'eip155';
+  static const String kFullChainId = 'eip155:5';
+
+  static String? _url;
+  static SessionData? _sessionData;
+
+  String? account;
+
+  String get deepLinkUrl => 'metamask://wc?uri=$_url';
+
+  Future<String?> createSession() async {
+    // final bool isInstalled = await metamaskIsInstalled();
+    //
+    // if (!isInstalled) {
+    //   return Future.error(launchError);
+    // }
+
+    if (_walletConnect == null) {
+      await _initWalletConnect();
     }
+
+    final ConnectResponse connectResponse = await _walletConnect!.connect(
+      requiredNamespaces: {
+        kShortChainId: const RequiredNamespace(
+          chains: [kFullChainId],
+          methods: [
+            'eth_sign',
+            'eth_signTransaction',
+            'eth_sendTransaction',
+          ],
+          events: [
+            'chainChanged',
+            'accountsChanged',
+          ],
+        ),
+      },
+    );
+
+    final Uri? uri = connectResponse.uri;
+
+    if (uri != null) {
+      final String encodedUrl = Uri.encodeComponent('$uri');
+
+      _url = encodedUrl;
+
+      await launchUrlString(
+        deepLinkUrl,
+        mode: LaunchMode.externalApplication,
+      );
+
+      _sessionData = await connectResponse.session.future;
+      contract = await loadContract();
+
+      final String _account = NamespaceUtils.getAccount(
+        _sessionData!.namespaces.values.first.accounts.first,
+      );
+      setState(() {
+        account = _account;
+      });
+      return _account;
+    }
+
+    return null;
+  }
+
+  Future<bool> metamaskIsInstalled() async {
+    return await LaunchApp.isAppInstalled(
+      iosUrlScheme: 'metamask://',
+      androidPackageName: 'io.metamask',
+    );
+  }
+
+  Future<dynamic> submit(String name, List<dynamic> args, BuildContext context) async {
+    var data = contract.function(name).encodeCall(args);
+    // var p = await web3client.estimateGas(
+    //           to: EthereumAddress.fromHex(contractAddress),
+    //           sender: EthereumAddress.fromHex(account!),
+    //           data: data,
+    //         );
+
+    Transaction transaction = Transaction.callContract(
+      from: EthereumAddress.fromHex(account!),
+      contract: contract,
+      function: contract.function(name),
+      parameters: args,
+    );
+
+    EthereumTransaction ethereumTransaction = EthereumTransaction(
+      from: account!,
+      to: contractAddress,
+      value: "0x0",
+      data: hex.encode(List<int>.from(transaction.data!)),
+      /// ENCODE TRANSACTION USING convert LIB
+    );
+    await launchUrlString(
+      deepLinkUrl,
+      mode: LaunchMode.externalApplication,
+    );
+
+    final signResponse = await _walletConnect!.request(
+      topic: _sessionData!.topic,
+      chainId: "eip155:5",
+      request: SessionRequestParams(method: 'eth_sendTransaction', params: [ethereumTransaction.toJson()]),
+    );
+    return signResponse;
   }
 
   Future<DeployedContract> loadContract() async {
     String abi = await rootBundle.loadString("assets/abi.json");
-    final contract = DeployedContract(ContractAbi.fromJson(abi, "AsadToken"),
-        EthereumAddress.fromHex(contractAddress));
+    final contract = DeployedContract(ContractAbi.fromJson(abi, "AsadToken"), EthereumAddress.fromHex(contractAddress));
     return contract;
   }
 
   Future<List<dynamic>> query(String name, List<dynamic> args) async {
     final contract = await loadContract();
     final ethFunction = contract.function(name);
-    final result = await web3client.call(
-        contract: contract, function: ethFunction, params: args);
+    final result = await web3client.call(contract: contract, function: ethFunction, params: args);
     return result;
   }
 
@@ -91,85 +195,17 @@ class _HomePageState extends State<HomePage> {
 
   Future mintToken(BuildContext context) async {
     BigInt bigAmount = BigInt.from(100e18);
-    EthereumAddress toAddress = EthereumAddress.fromHex(_session!.accounts[0]);
+    EthereumAddress toAddress = EthereumAddress.fromHex(account!);
     var response = await submit("mint", [toAddress, bigAmount], context);
     return response;
   }
 
   Future transferToken(BuildContext context) async {
     BigInt bigAmount = BigInt.from(10e18);
-    EthereumAddress toAddress =
-        EthereumAddress.fromHex("0x95d214e60C1881FAcfca90D8909F0DdEE63F004f");
+    EthereumAddress toAddress = EthereumAddress.fromHex("0x95d214e60C1881FAcfca90D8909F0DdEE63F004f");
     var response = await submit("transfer", [toAddress, bigAmount], context);
     return response;
   }
-
-  submit(String name, List<dynamic> args, BuildContext context) async {
-    if (connector.connected) {
-      try {
-        EthereumWalletConnectProvider provider =
-            EthereumWalletConnectProvider(connector);
-        await launchUrlString(_uri, mode: LaunchMode.externalApplication);
-        var data = contract.function(name).encodeCall(args);
-
-        var p = await web3client.estimateGas(
-          to: EthereumAddress.fromHex(contractAddress),
-          sender: EthereumAddress.fromHex(_session!.accounts[0]),
-          data: data,
-        );
-        var tx = await provider.sendTransaction(
-          from: _session!.accounts[0],
-          to: contractAddress,
-          gas: p.toInt(),
-          data: data,
-        );
-        TransactionReceipt? val = await web3client.getTransactionReceipt(tx);
-        if (val?.status == null) {
-          AlertDialog alert = AlertDialog(
-            content: Row(children: [
-              const CircularProgressIndicator(
-                backgroundColor: Colors.red,
-              ),
-              Container(
-                  margin: const EdgeInsets.only(left: 7),
-                  child: const Text("Please Wait")),
-            ]),
-          );
-          showDialog(
-            barrierDismissible: false,
-            context: context,
-            builder: (BuildContext context) {
-              return alert;
-            },
-          );
-          Future.delayed(const Duration(seconds: 15), () async {
-            TransactionReceipt? value =
-                await web3client.getTransactionReceipt(tx);
-            if (value?.status != null) {
-              Navigator.pop(context);
-              loadDialog(context, value!, tx);
-            } else {
-              Future.delayed(const Duration(seconds: 10), () async {
-                TransactionReceipt? value =
-                    await web3client.getTransactionReceipt(tx);
-                if (value?.status != null) {
-                  Navigator.pop(context);
-                  loadDialog(context, value!, tx);
-                }
-              });
-            }
-          });
-        }
-      } catch (exp) {
-        print(exp);
-      }
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text("Please Connect with Metamask"),
-      ));
-    }
-  }
-
   void loadDialog(BuildContext context, TransactionReceipt value, var hash) {
     showDialog(
       context: context,
@@ -185,17 +221,11 @@ class _HomePageState extends State<HomePage> {
               ),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text("Comluative Gas Price"),
-                  Text("${value.cumulativeGasUsed}")
-                ],
+                children: [const Text("Comluative Gas Price"), Text("${value.cumulativeGasUsed}")],
               ),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text("BlockNumber"),
-                  Text("${value.blockNumber}")
-                ],
+                children: [const Text("BlockNumber"), Text("${value.blockNumber}")],
               ),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -231,17 +261,16 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     client = Client();
     web3client = Web3Client(rpc_url, client);
-    // contract = await loadContract();
-    // getBalanceToken(_session?.accounts[0] ?? "");
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_session != null) {
-      getBalanceToken(_session?.accounts[0] ?? "");
+    if (_sessionData != null) {
+      getBalanceToken(account ?? "");
       getTokenName();
       getTokenSymbol();
     }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text("ERC20 Integration"),
@@ -250,19 +279,22 @@ class _HomePageState extends State<HomePage> {
       drawer: Drawer(
           child: ListView(
         children: [
-          (_session != null)
+          (account != null)
               ? UserAccountsDrawerHeader(
                   accountName: const Text("Asad"),
-                  accountEmail: Text(account),
+                  accountEmail: Text(account!),
                   currentAccountPicture: const CircleAvatar(
                     backgroundColor: Colors.white,
                     child: Text("A"),
                   ),
                 )
               : ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.greenAccent),
-                  onPressed: () => loginUsingMetamask(context),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.greenAccent),
+                  onPressed: () {
+                    createSession().then((value) => (value) async {
+                          print("value");
+                        });
+                  },
                   child: const Text("Connect with Metamask")),
         ],
       )),
@@ -287,8 +319,7 @@ class _HomePageState extends State<HomePage> {
           ),
           Center(
             child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.greenAccent),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.greenAccent),
                 onPressed: () => mintToken(context),
                 child: const Text("Mint Token")),
           ),
@@ -303,3 +334,4 @@ class _HomePageState extends State<HomePage> {
     );
   }
 }
+
